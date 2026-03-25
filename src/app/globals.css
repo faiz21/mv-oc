@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/* MV-Companion OS — Dark Theme Design Tokens */
+:root {
+  /* Base surfaces */
+  --bg-base:      #0D0D0F;
+  --bg-sidebar:   #111116;
+  --bg-card:      #16161D;
+  --bg-elevated:  #1C1C25;
+  --bg-input:     #1E1E28;
+  --bg-hover:     #22222E;
+
+  /* Borders */
+  --border-subtle:  rgba(255,255,255,0.06);
+  --border-default: rgba(255,255,255,0.10);
+  --border-strong:  rgba(255,255,255,0.18);
+
+  /* Text */
+  --text-primary:   #F2F2F5;
+  --text-secondary: #9595A8;
+  --text-muted:     #5C5C72;
+  --text-disabled:  #3A3A4A;
+
+  /* Accent — Amber/Orange (from design reference) */
+  --accent:         #F59E0B;
+  --accent-hover:   #D97706;
+  --accent-muted:   rgba(245,158,11,0.15);
+
+  /* Indigo — active nav */
+  --nav-active:     #6366F1;
+  --nav-active-bg:  rgba(99,102,241,0.12);
+
+  /* Semantic */
+  --success:  #10B981;
+  --warning:  #F59E0B;
+  --error:    #EF4444;
+  --info:     #3B82F6;
+
+  /* Success muted */
+  --success-muted: rgba(16,185,129,0.12);
+  --warning-muted: rgba(245,158,11,0.12);
+  --error-muted:   rgba(239,68,68,0.12);
+  --info-muted:    rgba(59,130,246,0.12);
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Spacing tokens */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+}
+
+/* Force dark mode — this is a dark-first app */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Focus visible */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Remove focus for mouse users */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Utility: status badge animations */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
