@@ -2,28 +2,39 @@
 # Replace yourdomain.com with your actual domain
 # Caddy auto-provisions Let's Encrypt SSL
 
-yourdomain.com {
-  # Next.js app
+# ── Next.js App ───────────────────────────────────────────────────────────────
+app.yourdomain.com {
   reverse_proxy app:3000
 
-  # Supabase API (optional direct access)
-  handle /supabase/* {
-    uri strip_prefix /supabase
-    reverse_proxy kong:8000
-  }
-
-  # Security headers
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Content-Type-Options nosniff
-    X-Frame-Options DENY
+    X-Frame-Options SAMEORIGIN
     Referrer-Policy strict-origin-when-cross-origin
     -Server
   }
 }
 
-# Local dev — no SSL needed
-# Replace above block with this for local testing:
-# :80 {
-#   reverse_proxy app:3000
-# }
+# ── Supabase API (Kong gateway) ───────────────────────────────────────────────
+api.yourdomain.com {
+  reverse_proxy kong:8000
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options nosniff
+    -Server
+  }
+}
+
+# ── Supabase Studio (IP-locked — office/home only) ────────────────────────────
+studio.yourdomain.com {
+  @allowed remote_ip {$STUDIO_ALLOWED_IP}
+
+  handle @allowed {
+    reverse_proxy studio:3000
+  }
+
+  handle {
+    respond "Forbidden" 403
+  }
+}

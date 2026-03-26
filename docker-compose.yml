@@ -1,16 +1,16 @@
-version: '3.8'
-
 # MV-Companion OS — Full Stack (15 containers)
 # All services run on mv_network; only Caddy is internet-facing
+# Ref: system-architecture.md
 
 networks:
   mv_network:
     driver: bridge
 
 volumes:
-  db_data:
-  storage_data:
-  functions_data:
+  db_data:          # PostgreSQL data files — all schemas, tables, pgvector indexes
+  storage_data:     # Uploaded files — artifacts, wiki assets, profile images
+  caddy_data:       # Let's Encrypt SSL certificates (auto-renewed)
+  caddy_config:     # Caddy runtime config and admin API state
 
 services:
 
@@ -24,12 +24,14 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./caddy_data:/data
-      - ./caddy_config:/config
+      - caddy_data:/data       # SSL certs
+      - caddy_config:/config   # Runtime config state
     networks:
       - mv_network
     depends_on:
       - app
+      - kong
+      - studio
 
   # ─── Next.js App ─────────────────────────────────────────────────────────────
   app:
@@ -39,33 +41,74 @@ services:
     container_name: mv_app
     restart: unless-stopped
     environment:
-      - NEXT_PUBLIC_SUPABASE_URL=http://kong:8000
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - OPENCLAW_GATEWAY_URL=http://openclaw:8080
-      - OPENCLAW_API_KEY=${OPENCLAW_API_KEY}
+      # Browser-side — public URL routed through Caddy
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+      # Server-side — internal Docker hostname (never exposed to browser)
+      - SUPABASE_URL=http://kong:8000
+      - SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
       - NODE_ENV=production
     networks:
       - mv_network
     depends_on:
       - kong
-      - openclaw
+      - openclaw-gateway
 
   # ─── OpenClaw Gateway ────────────────────────────────────────────────────────
-  openclaw:
-    image: alpine/openclaw:latest
-    container_name: mv_openclaw
+  openclaw-gateway:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    container_name: mv_openclaw_gateway
     restart: unless-stopped
     environment:
-      - SUPABASE_URL=http://kong:8000
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - OPENCLAW_API_KEY=${OPENCLAW_API_KEY}
+      - HOME=/home/node
+      - TERM=xterm-256color
+      - TZ=${OPENCLAW_TZ:-UTC}
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
+      - OPENCLAW_SUPABASE_URL=${OPENCLAW_SUPABASE_URL:-http://host.docker.internal:54321}
+      - OPENCLAW_SUPABASE_KEY=${OPENCLAW_SUPABASE_KEY:-}
     volumes:
-      - ./openclaw_workspace:/workspace
+      - ${OPENCLAW_CONFIG_DIR:-./openclaw_config}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-./openclaw_workspace}:/home/node/.openclaw/workspace
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18889}:${OPENCLAW_GATEWAY_PORT:-18889}"
+      - "${OPENCLAW_BRIDGE_PORT:-18890}:${OPENCLAW_BRIDGE_PORT:-18890}"
+    init: true
+    command: ["node", "dist/index.js", "gateway", "--bind", "${OPENCLAW_GATEWAY_BIND:-lan}", "--port", "${OPENCLAW_GATEWAY_PORT:-18889}"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18889}/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - mv_network
-    depends_on:
-      - kong
+
+  openclaw-cli:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    container_name: mv_openclaw_cli
+    network_mode: "service:openclaw-gateway"
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - HOME=/home/node
+      - TERM=xterm-256color
+      - BROWSER=echo
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR:-./openclaw_config}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-./openclaw_workspace}:/home/node/.openclaw/workspace
 
   # ─── Supabase Stack ──────────────────────────────────────────────────────────
 
@@ -82,8 +125,7 @@ services:
       KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k"
     volumes:
       - ./supabase/kong.yml:/home/kong/kong.yml:ro
-    ports:
-      - "8000:8000/tcp"
+    # No ports exposed — internal only; Caddy proxies api.domain.com → kong:8000
     networks:
       - mv_network
     depends_on:
@@ -105,6 +147,12 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - mv_network
 
@@ -115,10 +163,10 @@ services:
     environment:
       GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: 9999
-      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-http://localhost:8000}
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL}
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
-      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
+      GOTRUE_SITE_URL: ${SITE_URL}
       GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS}
       GOTRUE_DISABLE_SIGNUP: "false"
       GOTRUE_JWT_ADMIN_ROLES: service_role
@@ -127,10 +175,16 @@ services:
       GOTRUE_JWT_EXP: 3600
       GOTRUE_JWT_SECRET: ${JWT_SECRET}
       GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-true}
+      GOTRUE_SMTP_HOST: ${GOTRUE_SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${GOTRUE_SMTP_PORT}
+      GOTRUE_SMTP_USER: ${GOTRUE_SMTP_USER}
+      GOTRUE_SMTP_PASS: ${GOTRUE_SMTP_PASS}
+      GOTRUE_SMTP_SENDER_NAME: ${GOTRUE_SMTP_SENDER_NAME:-MV-Companion OS}
     networks:
       - mv_network
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   rest:
     image: postgrest/postgrest:v12.0.1
@@ -147,7 +201,8 @@ services:
     networks:
       - mv_network
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   realtime:
     image: supabase/realtime:v2.27.5
@@ -172,15 +227,16 @@ services:
     networks:
       - mv_network
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   storage:
     image: supabase/storage-api:v0.46.4
     container_name: mv_storage
     restart: unless-stopped
     environment:
-      ANON_KEY: ${SUPABASE_ANON_KEY}
-      SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
       POSTGREST_URL: http://rest:3000
       PGRST_JWT_SECRET: ${JWT_SECRET}
       DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
@@ -195,8 +251,10 @@ services:
     networks:
       - mv_network
     depends_on:
-      - db
-      - rest
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
 
   functions:
     image: supabase/edge-runtime:v1.41.2
@@ -205,8 +263,8 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET}
       SUPABASE_URL: http://kong:8000
-      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
-      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
       VERIFY_JWT: "false"
     volumes:
@@ -214,7 +272,8 @@ services:
     networks:
       - mv_network
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   meta:
     image: supabase/postgres-meta:v0.80.0
@@ -239,8 +298,8 @@ services:
     environment:
       SUPABASE_URL: http://kong:8000
       SUPABASE_REST_URL: http://kong:8000/rest/v1/
-      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
-      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
     networks:
       - mv_network
     depends_on:
@@ -278,7 +337,8 @@ services:
     networks:
       - mv_network
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   vector:
     image: timberio/vector:0.28.1-alpine

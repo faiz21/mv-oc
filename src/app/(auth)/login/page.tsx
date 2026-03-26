@@ -63,10 +63,15 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+            <label
+              htmlFor="login-email"
+              className="block text-xs font-medium mb-1.5"
+              style={{ color: 'var(--text-secondary)' }}
+            >
               Email
             </label>
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -82,10 +87,15 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+            <label
+              htmlFor="login-password"
+              className="block text-xs font-medium mb-1.5"
+              style={{ color: 'var(--text-secondary)' }}
+            >
               Password
             </label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

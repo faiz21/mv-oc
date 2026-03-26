@@ -43,6 +43,7 @@ next-env.d.ts
 # Docker volumes
 caddy_data/
 caddy_config/
+openclaw_config/
 openclaw_workspace/
 
 # Supabase local
